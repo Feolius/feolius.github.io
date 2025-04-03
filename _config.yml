@@ -21,11 +21,11 @@
 title: Nervous programmer
 email: feolius@gmail.com
 description: >- # this means to ignore newlines until "baseurl:"
-  Личный блог о программировании
+  Personal blog about programming
 domain: nervprog.github.io
-url: "https://nervprog.github.io" # the base hostname & protocol for your site, e.g. http://example.com
+url: "https://nervprog.dev" # the base hostname & protocol for your site, e.g. http://example.com
 baseurl: "" # the subpath of your site, e.g. /blog
-twitter_username: feolius
+twitter_username:
 
 # Build settings
 #theme: no-style-please
