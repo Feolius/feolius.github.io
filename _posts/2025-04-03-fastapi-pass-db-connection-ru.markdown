@@ -128,7 +128,7 @@ async def db_dependency() -> AsyncGenerator[None, None]:
 ```python
 @app.get("/foo", dependencies=[Depends(db_dependency)])
 async def foo(): # no arguments here
-    return await bar(db)
+    return await bar()
 ```
 
  
