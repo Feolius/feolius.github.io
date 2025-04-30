@@ -234,11 +234,71 @@ RuntimeError: test error
 
 Очевидным минусом данного подхода является необходимость декорировать каждый обработчик запроса.
 
+## Что предлагает удача? (дополнение поста)
+
+Уже после публикации я случайно наткнулся на 
+[эту](https://fastapi.tiangolo.com/how-to/custom-request-and-route/#create-a-custom-gziproute-class) страницу в 
+документации Fastapi. Здесь описывается, как можно создать кастомный APIRoute класс. В числе прочего приводится пример
+с отловом ошибки _RequestValidationError_. 
+
+Я решил попробовать этот способ, чтоб поймать все исключения.
+
+```python
+class ErrorLoggingRoute(APIRoute):
+    def get_route_handler(self) -> Callable:
+        original_route_handler = super().get_route_handler()
+        async def logging_route_handler(request: Request) -> Response:
+            try:
+                return await original_route_handler(request)
+            except Exception as e:
+                return process_error(e)
+        return logging_route_handler
+        
+app = FastAPI()
+app.router.route_class = ErrorLoggingRoute
+```
+
+И это сработало!
+```
+ERROR: unhandled exception
+Traceback (most recent call last):
+  File "/errors.py", line 65, in logging_route_handler
+    return await original_route_handler(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/.venv/lib/python3.13/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/.venv/lib/python3.13/site-packages/fastapi/routing.py", line 212, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app.py", line 176, in test_start_session
+    some_var = await some_code(request)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/chat_session.py", line 55, in create_session
+    raise RuntimeError("test error")
+RuntimeError: test error
+```
+
+Бэктрейс совсем небольшой, всего 3 "лишних" вызова до момента, как ошибка будет залогирована. Более того, больше нет
+проблем с тем, чтоб обработать `HTTPException` и `RequestValidationError` в том же месте, что и остальные ошибки!
+
+Проблема решена! УРА!
+
 ## Что в итоге?
 
-Каждый из приведенных способов рабочий. Но идеального нет. Для себя я принял решение, что чистота логов для меня важна, и необходимость
+~~Каждый из приведенных способов рабочий. Но идеального нет. Для себя я принял решение, что чистота логов для меня важна, и необходимость
 писать декоратор возле каждого обработчика --- та цена, которую я готов заплатить за это. Надежность этого способа
-можно повысить, написав кастомное правило для линтера, проверяющее наличие декоратора для каждого обработчика.
+можно повысить, написав кастомное правило для линтера, проверяющее наличие декоратора для каждого обработчика.~~
+
+В итоге придется убрать все `@exception_handler` декораторы из кода:)
+
+На запрос "fastapi catch all exceptions" удалось найти решения с обработчиками ошибок и с middleware. 
+Большинство из них фокусируются на том, чтоб отправить какой-то ответ при возникновении ошибки, но мало кто 
+рассматривает вопрос логирования. При такой постановке задачи и обработчики ошибок, и middleware справляются с работой.
+Но именно "мусор" в логах заставляет задумываться об альтернативах. 
 
 
 

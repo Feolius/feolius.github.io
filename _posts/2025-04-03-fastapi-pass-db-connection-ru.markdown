@@ -1,15 +1,18 @@
 ---
 layout: post
-title:  "Как правильно подключиться к базе данных в Fastapi"
+title:  "Как подключиться к базе данных в Fastapi, чтоб это не мозолило глаза"
 date:   2025-04-03
 categories: ru
 tags: "python fastapi contextvars"
 ---
 
+## Дисклеймер
+Ниже мы не рассматриваем ситуацию с пулом соединений. Только модель "один запрос --- одно подключение к базе".
+
 ## Проблематика
 В FastAPI есть прикол: подключение к базе данных порождает +1 аргумент во всех функциях.
 
-В чем суть: FastAPI [предлагают](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#a-database-dependency-with-yield) способ передавать подключение к базе данных через Depends:
+В чем суть: FastAPI [предлагает](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#a-database-dependency-with-yield) способ передавать подключение к базе данных через Depends:
 ```python
 async def db_dependency() -> AsyncGenerator[asyncpg.Connection, None]:
     connection = await db_connect()
