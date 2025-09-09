@@ -120,14 +120,103 @@ $entityManager->flush();
 * переместить все твиты из одного аккаунта в другой (возможно перенести еще какую-то информацию, но в нашем примере больше ничего нет)
 * удалить первый аккаунт
 
-Давайте разбираться последовательно с каждым из этих пунктов.
+Давайте разбираться последовательно с каждым из этих пунктов. Начнем с перемещением. Создадим двух пользователей, и один
+твит.
+```php
+$user1 = new User();
+$user2 = new User();
+$twit = new Twit($user1,'some text');
+
+$entityManager->persist($user1);
+$entityManager->persist($user2);
+$entityManager->persist($twit);
+$entityManager->flush();
+```
+Тогда кажется, чтоб поменять владельца твита, достаточно вызвать
+```php
+$twit->user = $user2;
+$entityManager->flush();
+```
+И действительно, это сработает. Теперь твит принадлежит другому пользователю. Но есть одна проблема.
+```php
+assert($user1->twits->contains($twit));
+$twit->user = $user2;
+assert($user1->twits->contains($twit));
+$entityManager->flush();
+assert($user1->twits->contains($twit));
+```
+Обратите внимание, что все asserts показывают один и тот же результат: твит все еще принадлежит `$user1`, что неверно, и
+может привести к ошибкам в коде. Последние два assert должны падать.
 
 Здесь мы имеем дело с Bi-directional ManyToOne связыванием. Для Doctrine важна только, та
 сторона, которая хранит внешний ключ. Она еще называется Owning side. У нас это Twit, т.к. именно здесь -- ссылка на юзера. 
+Другая сторона, inverse side, находится внутри User. Это поле twits. Doctrine не обновляет inverse сторону, это нужно
+делать нам самим. Для этого придется немного изменить класс Twit.
+```php
+class Twit
+{
+    // остальной код тот же
+    #[ORM\ManyToOne(targetEntity: User::class, inversedBy: 'twits')]
+    public User $user {
+        get {
+            return $this->user;
+        }
+        set(User $user) {
+            if (!isset($this->user)) {
+                // Первое присваивание.
+                $this->user = $user;
+                return;
+            }
+            // Удаляем этот твит у прошлого юзера.
+            $this->user->twits->removeElement($this);
+            $this->user = $user;
+            if (!$user->twits->contains($this)) {
+                // Добавляем тви текущему юзеру.
+                $user->twits->add($this);
+            }
+        }
+    }
+}
+```
+
+Вот теперь у нас корректно обновляются данные у обоих юзеров при изменении владельца твита.
+
 Подробнее про Owning и Inverse в официальной документации [тут](https://www.doctrine-project.org/projects/doctrine-orm/en/3.5/reference/unitofwork-associations.html).
 
-Doctrine отслеживает изменение только в Owning side. Это означает что, если мы захотим поменять user у твита, то 
-нам достаточно просто присвоить нового пользователя.
+Далее по плану, надо разобраться с удалением. Тут все просто: для того, чтобы удалить пользователя, необходимо сначала
+удалить всего его твиты, иначе получим ошибку. Сделать это можно несколькими способами, например добавить 
+`cascade: ['remove']` в аннотации
+```php
+#[ORM\OneToMany(targetEntity: Twit::class, mappedBy: 'user', cascade: ['remove'])]
+private(set) Collection $twits;
+```
+
+Но я предлагаю сделать это более явно с помощью [lifecycle callbacks](https://www.doctrine-project.org/projects/doctrine-orm/en/3.5/reference/events.html#lifecycle-callbacks)
+```php
+#[ORM\Entity]
+#[ORM\HasLifecycleCallbacks]
+class User
+{
+    // остальной код тот же
+    #[ORM\PreRemove]
+    public function preRemove(PreRemoveEventArgs $args): void
+    {
+        foreach ($this->twits as $twit) {
+            $args->getObjectManager()->remove($twit);
+        }
+
+    }
+}
+```
+
+Опять же, здесь не выполняются никакие запросы в бд. Doctrine лишь помечает все твиты, чтоб выполнить удаление при 
+следующем вызове `flush()`. Теперь мы можем корректно удалять любого юзера со всеми его твитами, не опасаясь foreign 
+key constraint проблем.
+```php
+$entityManager->remove($user);
+$entityManager->flush();
+```
+
 
 
 
