@@ -204,7 +204,6 @@ class User
         foreach ($this->twits as $twit) {
             $args->getObjectManager()->remove($twit);
         }
-
     }
 }
 ```
@@ -252,7 +251,102 @@ final readonly class UserMergeManager
 Случайное обращение к такому полю может вызвать запрос в базу и гидрацию сотни тысяч объектов. Поэтому inverse сторону
 добавлять не стоит.
 
-Теперь давайте посмотрим, а что будет если в нашем твиттере убрать эту связь, т.е. убрать в User поле twits
+Теперь давайте посмотрим, а что будет если в нашем твиттере убрать эту связь, т.е. убрать в `User` поле `twits`. В 
+таком случае нам нужно будет внести в ряд важных изменений.
 
+Во-первых, упрощается изменение пользователя у `Twit`. Теперь это снова просто поле, 
+т.к. больше не надо отслеживать согласованность коллекции `twits` у пользователей.
+```php
+class Twit
+{
+    //...
+    #[ORM\ManyToOne(targetEntity: User::class, inversedBy: 'twits')]
+    public User $user;
+}
+```
+
+Во-вторых, `preRmove` lifecycle callback у класса `User` теперь получает нужные твиты из репозитория.
+```php
+class User
+{
+    //...
+    #[ORM\PreRemove]
+    public function preRemove(PreRemoveEventArgs $args): void
+    {
+        $twits = $args->getObjectManager()
+            ->getRepository(Twit::class)
+            ->findBy(['user' => $this->id]);
+        foreach ($twits as $twit) {
+            $args->getObjectManager()->remove($twit);
+        }
+    }
+}
+```
+
+Ну и, наконец, сам `UserMergeManager` также должен получать твиты из репозитория.
+```php
+final readonly class UserMergeManager
+{
+    public function __construct(
+        private EntityManagerInterface $entityManager,
+    ) {
+    }
+
+    public function merge(User $source, User $target): void
+    {
+        $twits = $this->entityManager
+            ->getRepository(Twit::class)
+            ->findBy(['user' => $source->id]);
+        foreach ($twits as $twit) {
+            $twit->user = $target;
+        }
+        $this->entityManager->remove($source);
+        $this->entityManager->flush();
+    }
+}
+```
+
+И вот теперь, если мы попытаемся протестировать изменения, мы обнаружим, что вместо слияния у нас просто удален `$source` 
+пользователь вместе со всеми своими твитами. А для того, чтоб все работало правильно, нам нужно добавить еще один `flush()`. 
+```php
+$twits = $this->entityManager
+    ->getRepository(Twit::class)
+    ->findBy(['user' => $source->id]);
+foreach ($twits as $twit) {
+    $twit->user = $target;
+}
+$this->entityManager->flush(); // добавили
+$this->entityManager->remove($source);
+$this->entityManager->flush();
+```
+Почему же так происходит, и почему с полем `twits` все работало без дополнительного flush()? Дело в том, что теперь
+в `preRemove` мы ходим в бд за нужными твитами через вызов метода в репозитории. База еще ничего не знает о том, 
+что мы вообще-то собираемся эти твиты просто другому пользователю присвоить. И вот `preRemove` теперь помечает 
+все исходные твиты `$source`, как те, что надо удалить при следующем `flush()`. Добавление `flush()` перед вызовом 
+`remove($source)` синхронизирует присвоение нового пользователя, и последующий `preRemove` уже не увидит ни одного твита.
+
+Более того, раньше мы могли полагаться на [implicit transaction demarcation](https://www.doctrine-project.org/projects/doctrine-orm/en/3.5/reference/transactions-and-concurrency.html#approach-1-implicitly).
+За этими умными словами скрывается тот факт, что при вызове `flush()` Doctrine создает транзакцию для всех 
+последующих запросов, если вы сами этого не сделали. Теперь же у нас на весь процесс два вызова `flush()`, а значит,
+будут две транзакции. Это неправильно. Весь процесс должен выполняться в рамках одной транзакции. Поэтому надо сделать 
+еще вот так
+```php
+$this->entityManager->wrapInTransaction(function () use ($source, $target) {
+    $twits = $this->entityManager
+        ->getRepository(Twit::class)
+        ->findBy(['user' => $source->id]);
+    foreach ($twits as $twit) {
+        $twit->user = $target;
+    }
+    $this->entityManager->flush();
+    $this->entityManager->remove($source);
+    $this->entityManager->flush();
+});
+```
+
+Довольно существенные изменения для исходно простого и понятного класса `UserMergeManager`, как мне кажется.
+
+Известны ли подобные эффекты разработчикам Doctrine? Безусловно. Они описаны в [документации](https://www.doctrine-project.org/projects/doctrine-orm/en/3.5/reference/working-with-objects.html#effects-of-database-and-unitofwork-being-out-of-sync).
+Но легче ли от этого решать, "А куда же мне поместить этот `flush()`"? Ничуть.
 
 
