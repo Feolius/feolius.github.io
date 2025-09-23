@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Как Doctrine ORM ломает вашу архитектуру"
-date:   2025-09-06
+date:   2025-09-23
 categories: ru
 tags: "php doctrine-orm"
 ---
