@@ -130,6 +130,78 @@ def accept_enum_return_foo_bar(enum: FooBarBaz) -> FooBarValue:
 тип с литералами, что не улучшает настроение. Конечно я не один такой страдающий тут.
 Фича [реквест](https://github.com/python/typing/issues/781) висит уже 5 лет. Но увы.
 
+## Literal Widening
+
+Напишем еще более бессмысленный код.
+
+```python
+def accept_enum_return_foo_bar() -> FooBarValue:
+    return "foo"
+```
+
+Будет ли ругаться mypy? Да конечно нет. Тут все ж корректно. `"foo"` --- один из ожидаемых литералов.
+
+А так?
+```python
+def accept_enum_return_foo_bar() -> FooBarValue:
+    res = "foo"
+    return res
+```
+
+А так увидим ошибку. 
+```
+error: Incompatible return value type (got "str", expected "Literal['foo', 'bar']")
+```
+
+Все дело в том, что mypy не особо хочет связываться с литералами, и при первой 
+возможности конвертирует их в близкий дженерик тип. В данном случае это string.
+Решением будет уточнить тип `res: FooBarValue = "foo"`.
+
+Ну а phpstan будет до последнего ковыряться с вашими литералами в рамках общего скоупа.
+
+## Join vs Union
+
+Теперь давайте отвлечемся от литералов и перейдем к более общим проблемам. Вернемся к пыхе. 
+Какую ошибку покажет phpstan?
+```php
+function returnIntOrString(): int|string
+{
+    $res = ['foo', 1];
+    return $res[0];
+}
+```
+
+Ответ: ```Function returnIntOrString() never returns int so it can be removed from the return type.```
+
+И это очень круто, потому что phpstan даже работает "в обратку", и подсказывает, когда ты нафигачил
+лишних типов. Конечно проблема уйдет, если убрать `int` из ожидаемого типа. Но я хотел показать 
+другое. Поэтому я исправлю ошибку так.
+```php
+function returnIntOrString(bool $second): int|string
+{
+    $res = ['foo', 1];
+    if ($second) {
+        return $res[1];
+    }
+    return $res[0];
+}
+```
+Теперь все в порядке.
+
+А вот аналогичный питонячий код
+```python
+def return_int_or_string() -> str | int:
+    res = ["foo", 1]
+    return res[0]
+```
+И ошибка будет совсем другой: 
+```Incompatible return value type (got "object", expected "str | int")```.
+И с такой ошибкой даже фикс для phpstan не поможет.
+
+И дело тут в фундаментальной проблеме mypy, которая носит название `join-vs-union`. Целый [топик](https://github.com/python/mypy/labels/topic-join-v-union?page=1)
+на гитхабе посвящен этой проблеме. И там куча issues.
+
+
 ## Mypy --- доверчивый парнишка
 
 В этот раз предлагаю начать с python. Задача у нас в этот раз стоит нетривиальная. Давайте
